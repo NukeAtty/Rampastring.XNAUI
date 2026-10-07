@@ -1,5 +1,7 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System;
+using Microsoft.Xna.Framework;
 using Rampastring.Tools;
+using Rampastring.XNAUI.FontManagement;
 
 namespace Rampastring.XNAUI.XNAControls;
 
@@ -21,7 +23,8 @@ public class XNATextBlock : XNAPanel
 
         set
         {
-            base.Text = Renderer.FixText(value, FontIndex, Width - TextXMargin * 2).Text;
+            base.Text = string.Join(Environment.NewLine,
+                FontManager.GetFixedTextLines(value, FontIndex, Width - TextXMargin * 2, keepBlankLines: true));
         }
     }
 
