@@ -29,6 +29,7 @@ public static class AssetLoader
 
     private static List<Texture2D> textureCache;
     private static List<SoundEffect> soundCache;
+    private static List<AssetPak> assetPaks;
 
     public static bool IsInitialized { get; private set; } = false;
 
@@ -48,7 +49,40 @@ public static class AssetLoader
         AssetSearchPaths = new List<string>();
         textureCache = new List<Texture2D>();
         soundCache = new List<SoundEffect>();
+        assetPaks = new List<AssetPak>();
         contentManager = content;
+    }
+
+    /// <summary>
+    /// Registers an encrypted asset archive. Registered archives are searched
+    /// after the regular <see cref="AssetSearchPaths"/> when loading assets.
+    /// </summary>
+    /// <param name="path">The path of the archive file.</param>
+    /// <param name="key">The AES-256 key used to decrypt the archive entries.</param>
+    /// <returns>true if the archive was registered, otherwise false.</returns>
+    public static bool RegisterPak(string path, byte[] key)
+    {
+        if (assetPaks == null)
+            throw new InvalidOperationException("AssetLoader is not initialized yet.");
+
+        if (!File.Exists(path))
+        {
+            Logger.Log("AssetLoader.RegisterPak: archive not found: " + path);
+            return false;
+        }
+
+        try
+        {
+            var pak = new AssetPak(path, key);
+            assetPaks.Add(pak);
+            Logger.Log($"AssetLoader.RegisterPak: registered {path} with {pak.EntryCount} entries");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("AssetLoader.RegisterPak: failed to open " + path + "! Message: " + ex.Message);
+            return false;
+        }
     }
 
     /// <summary>
@@ -116,6 +150,16 @@ public static class AssetLoader
                     return texture;
                 }
             }
+
+            if (TryGetPakEntryData(name, out byte[] data))
+            {
+                using var ms = new MemoryStream(data, writable: false);
+                var texture = Texture2D.FromStream(graphicsDevice, ms);
+                texture.Name = name;
+                PremultiplyAlpha(texture);
+
+                return texture;
+            }
         }
         catch (Exception ex)
         {
@@ -179,7 +223,139 @@ public static class AssetLoader
                 return true;
         }
 
+        if (PakContainsEntry(name))
+            return true;
+
         return false;
+    }
+
+    /// <summary>
+    /// Determines whether a directory exists either on disk (in any asset search
+    /// path) or inside a registered pak archive.
+    /// </summary>
+    /// <param name="directoryName">The directory name, relative to the asset search paths.</param>
+    public static bool AssetDirectoryExists(string directoryName)
+    {
+        if (string.IsNullOrEmpty(directoryName))
+            return false;
+
+        if (AssetSearchPaths != null)
+        {
+            foreach (string searchPath in AssetSearchPaths)
+            {
+                if (string.IsNullOrEmpty(searchPath))
+                    continue;
+
+                try
+                {
+                    if (Directory.Exists(SafePath.CombineDirectoryPath(searchPath, directoryName)))
+                        return true;
+                }
+                catch
+                {
+                    // Ignore invalid search paths.
+                }
+            }
+        }
+
+        if (assetPaks != null)
+        {
+            foreach (AssetPak pak in assetPaks)
+            {
+                if (pak.ContainsDirectory(directoryName))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns whether a registered pak archive contains an entry for the given
+    /// asset name, which may be a plain asset name or a full file path.
+    /// </summary>
+    private static bool PakContainsEntry(string name)
+    {
+        if (assetPaks == null)
+            return false;
+
+        foreach (AssetPak pak in assetPaks)
+        {
+            if (pak.ContainsEntry(name))
+                return true;
+        }
+
+        foreach (string candidate in GetPathRelativeAssetNames(name))
+        {
+            foreach (AssetPak pak in assetPaks)
+            {
+                if (pak.ContainsEntry(candidate))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Decrypts the content of an asset from the registered pak archives. The
+    /// asset name may be a plain asset name or a full file path.
+    /// </summary>
+    private static bool TryGetPakEntryData(string name, out byte[] data)
+    {
+        data = null;
+
+        if (assetPaks == null)
+            return false;
+
+        foreach (AssetPak pak in assetPaks)
+        {
+            if (pak.TryGetEntryData(name, out data))
+                return true;
+        }
+
+        foreach (string candidate in GetPathRelativeAssetNames(name))
+        {
+            foreach (AssetPak pak in assetPaks)
+            {
+                if (pak.TryGetEntryData(candidate, out data))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// For a full file path, yields the corresponding asset names relative to
+    /// each asset search path so that pak archives can be queried with them.
+    /// </summary>
+    private static IEnumerable<string> GetPathRelativeAssetNames(string name)
+    {
+        if (!Path.IsPathRooted(name) || AssetSearchPaths == null)
+            yield break;
+
+        foreach (string searchPath in AssetSearchPaths)
+        {
+            if (string.IsNullOrEmpty(searchPath))
+                continue;
+
+            string searchFull;
+            try
+            {
+                searchFull = Path.GetFullPath(searchPath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            string prefix = searchFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                yield return name.Substring(prefix.Length);
+        }
     }
 
     /// <summary>
@@ -277,6 +453,22 @@ public static class AssetLoader
                 soundCache.Add(se);
                 return se;
             }
+        }
+
+        try
+        {
+            if (TryGetPakEntryData(name, out byte[] data))
+            {
+                using var ms = new MemoryStream(data, writable: false);
+                var se = SoundEffect.FromStream(ms);
+                se.Name = name;
+                soundCache.Add(se);
+                return se;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("AssetLoader.LoadSound: loading sound " + name + " from a pak archive failed! Message: " + ex.Message);
         }
 
         Logger.Log("AssetLoader.LoadSound: Sound not found! " + name);

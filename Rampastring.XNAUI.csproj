@@ -118,6 +118,10 @@
     <Reference Include="Microsoft.Xna.Framework.Game" HintPath="References\XNA\Microsoft.Xna.Framework.Game.dll" />
     <Reference Include="Microsoft.Xna.Framework.Graphics" HintPath="References\XNA\Microsoft.Xna.Framework.Graphics.dll" />
   </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETFramework'">
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
   
   <ItemGroup>
     <None Include="build\GL.targets" Condition="$(Configuration.Contains('WindowsGL'))" Pack="True" PackagePath="build\$(PackageId).targets" />
