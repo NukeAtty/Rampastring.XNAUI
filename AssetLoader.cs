@@ -86,6 +86,39 @@ public static class AssetLoader
     }
 
     /// <summary>
+    /// Registers an already opened encrypted asset archive. Registered archives
+    /// are searched after the regular <see cref="AssetSearchPaths"/> when loading
+    /// assets.
+    /// </summary>
+    /// <param name="pak">The archive to register.</param>
+    /// <returns>true if the archive was registered, otherwise false.</returns>
+    public static bool RegisterPak(AssetPak pak)
+    {
+        if (assetPaks == null)
+            throw new InvalidOperationException("AssetLoader is not initialized yet.");
+
+        if (pak == null)
+            return false;
+
+        assetPaks.Add(pak);
+        Logger.Log($"AssetLoader.RegisterPak: registered {pak.Path} with {pak.EntryCount} entries");
+        return true;
+    }
+
+    /// <summary>
+    /// Decrypts and returns the raw content of the asset with the given name from
+    /// the registered pak archives. The name may be a plain asset name or a full
+    /// file path.
+    /// </summary>
+    /// <param name="name">The asset name.</param>
+    /// <param name="data">The decrypted asset content on success, otherwise null.</param>
+    /// <returns>true if the asset was found and decrypted, otherwise false.</returns>
+    public static bool TryReadAssetBytes(string name, out byte[] data)
+    {
+        return TryGetPakEntryData(name, out data);
+    }
+
+    /// <summary>
     /// Loads a texture with the specific name. If the texture isn't found from any
     /// asset search path, returns a dummy texture.
     /// </summary>
@@ -334,6 +367,17 @@ public static class AssetLoader
     {
         if (!Path.IsPathRooted(name) || AssetSearchPaths == null)
             yield break;
+
+        // Normalize so that relative segments such as ".." are resolved before
+        // the path is compared against the search paths.
+        try
+        {
+            name = Path.GetFullPath(name);
+        }
+        catch
+        {
+            yield break;
+        }
 
         foreach (string searchPath in AssetSearchPaths)
         {
